@@ -1,141 +1,74 @@
 import ccxt
-import pandas as pd
-import time
 import asyncio
+import pandas as pd
 from telegram import Bot
+import os
 
-# ==========================================
-# TELEGRAM
-# ==========================================
+# =========================
+# CONFIG
+# =========================
 
-TOKEN = "8242341341:AAG9TS4v9X2lER6jV6aNCFItOp-OLeVV1J4"
-CHAT_ID = "5284143497"
+TOKEN = os.getenv("8242341341:AAG9TS4v9X2lER6jV6aNCFItOp-OLeVV1J4")
+CHAT_ID = os.getenv("5284143497")
 
 bot = Bot(token=TOKEN)
 
-# ==========================================
+# =========================
 # BYBIT
-# ==========================================
+# =========================
 
 exchange = ccxt.bybit({
-    "enableRateLimit": True
+    "enableRateLimit": True,
+    "options": {
+        "defaultType": "spot"
+    }
 })
+
+exchange.rateLimit = 1500
 
 TIMEFRAME = "1m"
 
 ultimo_sinal = {}
 
-# ==========================================
+# =========================
 # PEGAR MOEDAS USDT
-# ==========================================
+# =========================
 
 def pegar_moedas():
-
     mercados = exchange.load_markets()
 
     pares = []
 
     for symbol in mercados:
+        if "/USDT" in symbol:
+            pares.append(symbol)
 
-        try:
+    return pares[:50]
 
-            if (
-                "/USDT" in symbol
-                and mercados[symbol]["active"]
-            ):
-
-                pares.append(symbol)
-
-        except:
-            pass
-
-    return pares[:60]
-
-# ==========================================
-# RSI
-# ==========================================
-
-def calcular_rsi(series, periodo=14):
-
-    delta = series.diff()
-
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-
-    media_gain = gain.rolling(periodo).mean()
-    media_loss = loss.rolling(periodo).mean()
-
-    rs = media_gain / media_loss
-
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
-
-# ==========================================
-# TELEGRAM
-# ==========================================
-
-async def enviar_sinal(
-    par,
-    tipo,
-    preco,
-    variacao,
-    rsi
-):
-
-    mensagem = f"""
-🚨 SINAL FORTE DETECTADO
-
-💎 ATIVO: {par}
-
-📈 TIPO: {tipo}
-
-💰 PREÇO: {preco}
-
-⚡ VARIAÇÃO 1M: {round(variacao,2)}%
-
-📊 RSI: {round(rsi,2)}
-
-🔥 MOVIMENTO EXPLOSIVO
-"""
-
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text=mensagem
-    )
-
-# ==========================================
-# ANALISAR MERCADO
-# ==========================================
+# =========================
+# ANALISAR
+# =========================
 
 async def analisar():
 
-    moedas = pegar_moedas()
-
-    print(f"{len(moedas)} MOEDAS CARREGADAS")
+    print("🚀 BOT SCALPING VOLATILIDADE INICIADO")
 
     while True:
 
         try:
 
-            print("ESCANEANDO MERCADO...")
+            moedas = pegar_moedas()
 
-            for par in moedas:
+            for symbol in moedas:
 
                 try:
 
-                    print(f"Analisando {par}")
-
-                    candles = exchange.fetch_ohlcv(
-                        par,
-                        timeframe=TIMEFRAME,
-                        limit=50
-                    )
+                    ohlcv = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=100)
 
                     df = pd.DataFrame(
-                        candles,
+                        ohlcv,
                         columns=[
-                            "time",
+                            "timestamp",
                             "open",
                             "high",
                             "low",
@@ -144,114 +77,101 @@ async def analisar():
                         ]
                     )
 
-                    # ==================================
-                    # INDICADORES
-                    # ==================================
+                    # RSI
+                    delta = df["close"].diff()
 
-                    df["ema9"] = df["close"].ewm(span=9).mean()
+                    gain = delta.where(delta > 0, 0)
+                    loss = -delta.where(delta < 0, 0)
 
-                    df["ema21"] = df["close"].ewm(span=21).mean()
+                    media_gain = gain.rolling(14).mean()
+                    media_loss = loss.rolling(14).mean()
 
-                    df["rsi"] = calcular_rsi(df["close"])
+                    rs = media_gain / media_loss
+
+                    rsi = 100 - (100 / (1 + rs))
+
+                    rsi_atual = rsi.iloc[-1]
+
+                    # MÉDIAS
+                    ema9 = df["close"].ewm(span=9).mean()
+                    ema21 = df["close"].ewm(span=21).mean()
 
                     preco = df["close"].iloc[-1]
 
-                    abertura = df["open"].iloc[-1]
+                    # SINAL LONG
+                    if (
+                        ema9.iloc[-1] > ema21.iloc[-1]
+                        and rsi_atual < 35
+                    ):
 
-                    fechamento = df["close"].iloc[-1]
+                        msg = f"""
+🚀 SINAL DE COMPRA
 
-                    ema9 = df["ema9"].iloc[-1]
+💎 Moeda: {symbol}
+💰 Preço: {preco:.4f}
 
-                    ema21 = df["ema21"].iloc[-1]
+📈 Tendência de alta
+⚡ RSI baixo
 
-                    rsi = df["rsi"].iloc[-1]
+⏰ Timeframe: {TIMEFRAME}
+"""
 
-                    # ==================================
-                    # VARIAÇÃO %
-                    # ==================================
+                        await bot.send_message(
+                            chat_id=CHAT_ID,
+                            text=msg
+                        )
 
-                    variacao = (
-                        (
-                            fechamento - abertura
-                        ) / abertura
-                    ) * 100
+                        print(f"COMPRA: {symbol}")
 
-                    print(f"""
-=====================
-ATIVO: {par}
-VARIAÇÃO: {round(variacao,2)}%
-RSI: {round(rsi,2)}
-=====================
-""")
+                        await asyncio.sleep(3)
 
-                    # ==================================
-                    # FILTRO DE 1%
-                    # ==================================
+                    # SINAL SHORT
+                    elif (
+                        ema9.iloc[-1] < ema21.iloc[-1]
+                        and rsi_atual > 65
+                    ):
 
-                    if abs(variacao) >= 1:
+                        msg = f"""
+🔻 SINAL DE VENDA
 
-                        # BUY
+💎 Moeda: {symbol}
+💰 Preço: {preco:.4f}
 
-                        if (
-                            ema9 > ema21
-                            and rsi < 40
-                        ):
+📉 Tendência de baixa
+⚡ RSI alto
 
-                            if ultimo_sinal.get(par) != "BUY":
+⏰ Timeframe: {TIMEFRAME}
+"""
 
-                                print(f"BUY DETECTADO {par}")
+                        await bot.send_message(
+                            chat_id=CHAT_ID,
+                            text=msg
+                        )
 
-                                await enviar_sinal(
-                                    par,
-                                    "BUY 🚀",
-                                    preco,
-                                    variacao,
-                                    rsi
-                                )
+                        print(f"VENDA: {symbol}")
 
-                                ultimo_sinal[par] = "BUY"
+                        await asyncio.sleep(3)
 
-                        # SELL
+                    await asyncio.sleep(2)
 
-                        elif (
-                            ema9 < ema21
-                            and rsi > 60
-                        ):
+                except Exception as erro:
 
-                            if ultimo_sinal.get(par) != "SELL":
+                    print(f"ERRO {symbol}: {erro}")
 
-                                print(f"SELL DETECTADO {par}")
+                    await asyncio.sleep(2)
 
-                                await enviar_sinal(
-                                    par,
-                                    "SELL 🔻",
-                                    preco,
-                                    variacao,
-                                    rsi
-                                )
+            print("🔄 NOVA VARREDURA")
 
-                                ultimo_sinal[par] = "SELL"
+            await asyncio.sleep(20)
 
-                    time.sleep(1)
+        except Exception as erro_geral:
 
-                except Exception as erro_ativo:
+            print(f"ERRO GERAL: {erro_geral}")
 
-                    print(f"ERRO {par}: {erro_ativo}")
+            await asyncio.sleep(10)
 
-            print("NOVO CICLO EM 60 SEGUNDOS")
-
-            time.sleep(60)
-
-        except Exception as erro:
-
-            print("ERRO GERAL:", erro)
-
-            time.sleep(10)
-
-# ==========================================
+# =========================
 # START
-# ==========================================
-
-print("🚀 BOT SCALPING VOLATILIDADE INICIADO")
+# =========================
 
 asyncio.run(analisar())
