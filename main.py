@@ -1,18 +1,10 @@
-import ccxt
-import asyncio
-import pandas as pd
-from telegram import Bot
 import os
-
-# =========================
-# CONFIG
-# =========================
+from telegram import Bot
 
 TOKEN = os.getenv("8242341341:AAG9TS4v9X2lER6jV6aNCFItOp-OLeVV1J4")
 CHAT_ID = os.getenv("5284143497")
 
 bot = Bot(token=TOKEN)
-
 # =========================
 # BYBIT
 # =========================
