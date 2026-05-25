@@ -17,7 +17,7 @@ bot = Bot(token=TOKEN)
 # BINANCE
 # ==========================================
 
-exchange = ccxt.binance({
+exchange = ccxt.bybit()
     "enableRateLimit": True
 })
 
